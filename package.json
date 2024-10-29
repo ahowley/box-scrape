@@ -1,0 +1,27 @@
+{
+    "name": "box",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "dev": "ts-node src/index.ts",
+        "watch": "nodemon src/index.ts --watch",
+        "build": "swc src/index.ts",
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "author": "",
+    "license": "ISC",
+    "devDependencies": {
+        "@swc/core": "^1.7.40",
+        "@swc/helpers": "^0.5.13",
+        "@types/node": "^22.8.2",
+        "nodemon": "^3.1.7",
+        "regenerator-runtime": "^0.14.1",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.6.3"
+    },
+    "dependencies": {
+        "box-typescript-sdk-gen": "^1.7.0",
+        "dotenv": "^16.4.5"
+    }
+}

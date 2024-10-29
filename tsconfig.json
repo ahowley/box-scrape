@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ESNext",
+    "sourceMap": false,
+    "esModuleInterop": false,
+    "experimentalDecorators": true,
+    "noUnusedLocals": false,
+    "moduleResolution": "node",
+    "newLine": "LF",
+    "baseUrl": ".",
+    "strict": true,
+    "lib": [
+      "ESNext",
+      "dom"
+    ],
+    "outDir": "js",
+    "rootDir": "src"
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules"
+  ],
+  "ts-node": {
+    "swc": true
+  }
+}

@@ -1,0 +1,4 @@
+js/*
+!js/.gitkeep
+node_modules
+.env
