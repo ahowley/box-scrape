@@ -5,6 +5,7 @@
     "main": "index.js",
     "scripts": {
         "dev": "ts-node src/index.ts",
+        "download-only": "ts-node src/index.ts --download-only",
         "watch": "nodemon src/index.ts --watch",
         "build": "swc src/index.ts",
         "test": "echo \"Error: no test specified\" && exit 1"
