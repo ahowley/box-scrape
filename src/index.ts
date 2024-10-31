@@ -147,12 +147,20 @@ const downloadFolder = async (
 
         console.log(`Downloading file '${file.fileName}' with ID '${file.fileId}'.`);
         RequestsRemainingThisMinute -= 1;
-        const download = await client.downloads.downloadFile(file.fileId);
-        download.pipe(stream);
-        stream.on('finish', () => {
-            stream.close();
-            appendFileSync('./filesDownloaded.txt', `${file.fileId}\n`, { encoding: 'utf8' });
-        });
+        try {
+            const download = await client.downloads.downloadFile(file.fileId);
+            download.pipe(stream);
+            stream.on('finish', () => {
+                stream.close();
+                appendFileSync('./filesDownloaded.txt', `${file.fileId}\n`, { encoding: 'utf8' });
+            });
+        } catch (err: any) {
+            console.log(
+                `Failed to download file with ID ${file.fileId}: ${file.fileName}. Writing this ID to the "skipped files" document.`,
+                err,
+            );
+            appendFileSync('./filesSkipped.txt', `${file.fileId}\n${qualifiedPath}\n`, { encoding: 'utf8' });
+        }
     }
 };
 
@@ -176,6 +184,9 @@ const main = async () => {
 
     if (!existsSync('./filesDownloaded.txt')) {
         writeFileSync('./filesDownloaded.txt', '', { encoding: 'utf8' });
+    }
+    if (!existsSync('./filesSkipped.txt')) {
+        writeFileSync('./filesSkipped.txt', '', { encoding: 'utf8' });
     }
     const alreadyDownloadedFileIdsSerialized = readFileSync('./filesDownloaded.txt', { encoding: 'utf8' });
     const alreadyDownloadedFileIds = alreadyDownloadedFileIdsSerialized.split('\n').filter((line) => !!line);
