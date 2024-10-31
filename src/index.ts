@@ -142,10 +142,10 @@ const downloadFolder = async (
         if (!existsSync(downloadPath)) {
             mkdirSync(downloadPath, { recursive: true });
         }
-        const qualifiedPath = `${downloadPath}/${file.fileName}`;
+        const qualifiedPath = `${downloadPath}/${file.fileName.replace(/[/\\?%*:|"<>]/g, '-')}`;
         const stream = createWriteStream(qualifiedPath);
 
-        console.log(`Downloading file '${file.fileName}' with ID '${file.fileId}'.`);
+        console.log(`Downloading file '${file.fileName.replace(/[/\\?%*:|"<>]/g, '-')}' with ID '${file.fileId}'.`);
         RequestsRemainingThisMinute -= 1;
         try {
             const download = await client.downloads.downloadFile(file.fileId);
