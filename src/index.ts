@@ -123,6 +123,10 @@ const downloadFolder = async (
         }
     }
 
+    if (!existsSync(downloadPath)) {
+        mkdirSync(downloadPath, { recursive: true });
+    }
+
     for (const file of folder.files) {
         if (alreadyDownloadedFileIds.has(file.fileId)) {
             console.log(`Skipping already downloaded file with ID '${file.fileId}': '${file.fileName}'`);
@@ -139,9 +143,6 @@ const downloadFolder = async (
             requestsRemaining = await getRequestsRemaining();
         }
 
-        if (!existsSync(downloadPath)) {
-            mkdirSync(downloadPath, { recursive: true });
-        }
         const qualifiedPath = `${downloadPath}/${file.fileName.replace(/[/\\?%*:|"<>]/g, '-')}`;
         const stream = createWriteStream(qualifiedPath);
 
@@ -159,7 +160,9 @@ const downloadFolder = async (
                 `Failed to download file with ID ${file.fileId}: ${file.fileName}. Writing this ID to the "skipped files" document.`,
                 err,
             );
-            appendFileSync('./filesSkipped.txt', `${file.fileId}\n${qualifiedPath}\n`, { encoding: 'utf8' });
+            appendFileSync('./filesSkipped.txt', `${file.fileId}\t${qualifiedPath}\t${JSON.stringify(err)}\n`, {
+                encoding: 'utf8',
+            });
         }
     }
 };
