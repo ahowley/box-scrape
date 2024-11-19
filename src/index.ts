@@ -179,7 +179,7 @@ const downloadFolder = async (
             await downloadFolder(
                 client,
                 nestedFolder,
-                `${downloadPath}/${folder.folderName}`,
+                `${downloadPath}/${nestedFolder.folderName}`,
                 alreadyDownloadedFileIds,
             );
         }
