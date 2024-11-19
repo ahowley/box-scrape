@@ -1,12 +1,43 @@
 import { BoxClient, BoxDeveloperTokenAuth } from 'box-typescript-sdk-gen';
 import { writeFileSync, appendFileSync, readFileSync, createWriteStream, existsSync, mkdirSync } from 'fs';
 import * as dotenv from 'dotenv';
+import { FileFullOrFolderMiniOrWebLink } from 'box-typescript-sdk-gen/lib/schemas/fileFullOrFolderMiniOrWebLink.generated';
 dotenv.config();
 
+const ROOT_FOLDER = '0'; // 43489403829
 const REFRESH_TIME = 61 * 1000;
 const REQUESTS_PER_MINUTE = 950;
+const BOX_SEARCH_LIMIT = 1000;
 let RequestsRemainingThisMinute = REQUESTS_PER_MINUTE;
 let MinuteStart = Date.now();
+
+const dumpCachedFolderRequests = () => {
+    const forDump: [string, FileFullOrFolderMiniOrWebLink[]][] = [];
+    for (const keyValuePair of CachedFolderRequests?.entries() ?? []) {
+        forDump.push(keyValuePair);
+    }
+
+    writeFileSync('./folderRequestCache.json', JSON.stringify(forDump));
+};
+
+const readCachedFolderRequests = (): Map<string, FileFullOrFolderMiniOrWebLink[]> => {
+    const fileContents = readFileSync('./folderRequestCache.json', { encoding: 'utf8' });
+    const fromDumpArray: [string, FileFullOrFolderMiniOrWebLink[]][] = JSON.parse(fileContents);
+    const cachedFolderRequests = new Map<string, FileFullOrFolderMiniOrWebLink[]>();
+    for (const keyValuePair of fromDumpArray) {
+        const key = keyValuePair[0];
+        const value = keyValuePair[1];
+        cachedFolderRequests.set(key, value);
+    }
+
+    return cachedFolderRequests;
+};
+
+const CachedFolderRequests = existsSync('./folderRequestCache.json')
+    ? readCachedFolderRequests()
+    : new Map<string, FileFullOrFolderMiniOrWebLink[]>();
+
+setInterval(dumpCachedFolderRequests, 10_000);
 
 const getRequestsRemaining = async () => {
     let currentTimestamp = Date.now();
@@ -39,6 +70,38 @@ type Folder = {
     nestedFolders: Folder[];
 };
 
+const getFolderRequestCacheKey = (folderId: string, offset: number) => `${folderId}${offset}`;
+
+const getBoxFolderItems = async (client: BoxClient, folderId: string, offset: number) => {
+    const cacheKey = getFolderRequestCacheKey(folderId, offset);
+    if (CachedFolderRequests.has(cacheKey)) {
+        console.log('Returning cached response.');
+        return CachedFolderRequests.get(cacheKey)!;
+    }
+
+    console.log(`Fetching batch with offset: ${offset}.`);
+    // This ridiculous line of code helps "trick" the JS scheduler into not queueing a hundred thousand promises in parallel in the same nanosecond.
+    // It's not pretty, but it seems to do the trick to avoid blowing past rate limits due to threaded execution order.
+    await sleep(Math.random() * 1000);
+    while ((await getRequestsRemaining()) <= 0) {
+        console.log(`Out of requests this minute; sleeping.`);
+        await sleep(await getMsToRefresh());
+    }
+
+    console.log(`Making new request in folder: ${folderId}`);
+    RequestsRemainingThisMinute -= 1;
+    const allEntries = await (async () =>
+        (
+            await client.folders.getFolderItems(folderId, {
+                queryParams: { limit: BOX_SEARCH_LIMIT, offset },
+            })
+        ).entries || [])();
+
+    CachedFolderRequests.set(cacheKey, allEntries as FileFullOrFolderMiniOrWebLink[]);
+
+    return allEntries;
+};
+
 const getFolder = async (
     client: BoxClient,
     folderId: string,
@@ -50,17 +113,16 @@ const getFolder = async (
         return alreadyProcessedFolders.get(folderId)!;
     }
 
-    let requestsRemaining = await getRequestsRemaining();
-    console.log(`Processing folder with ID ${folderId}. Requests remaining this minute: ${requestsRemaining}`);
-    while (requestsRemaining <= 0) {
-        console.log(`Out of requests this minute; sleeping.`);
-        await sleep(await getMsToRefresh());
-        requestsRemaining = await getRequestsRemaining();
+    console.log(`Processing folder with ID ${folderId}.`);
+    const allEntries: FileFullOrFolderMiniOrWebLink[] = [];
+    let offset = 0;
+    let allEntriesBatch = await getBoxFolderItems(client, folderId, offset);
+    while (allEntriesBatch && allEntriesBatch.length) {
+        allEntries.push(...allEntriesBatch);
+        offset += BOX_SEARCH_LIMIT;
+        allEntriesBatch = await getBoxFolderItems(client, folderId, offset);
+        if (allEntriesBatch.length < BOX_SEARCH_LIMIT) break;
     }
-
-    console.log('Making new request.');
-    RequestsRemainingThisMinute -= 1;
-    const allEntries = await (async () => (await client.folders.getFolderItems(folderId)).entries || [])();
     const boxFolders = allEntries.filter((entry) => entry.type === 'folder');
     const boxFiles = allEntries.filter((entry) => entry.type === 'file');
 
@@ -191,10 +253,15 @@ const main = async () => {
     if (!existsSync('./filesSkipped.txt')) {
         writeFileSync('./filesSkipped.txt', '', { encoding: 'utf8' });
     }
+    if (!existsSync('./folderRequestCache.json')) {
+        writeFileSync('./folderRequestCache.json', '', { encoding: 'utf8' });
+    }
     const alreadyDownloadedFileIdsSerialized = readFileSync('./filesDownloaded.txt', { encoding: 'utf8' });
     const alreadyDownloadedFileIds = alreadyDownloadedFileIdsSerialized.split('\n').filter((line) => !!line);
 
-    const boxFolder = await client.folders.getFolderById('0');
+    console.log('Fetching root folder.');
+    const boxFolder = await client.folders.getFolderById(ROOT_FOLDER);
+    console.log('Beginning recursive folder scrape.');
     const rootFolder = await getFolder(client, boxFolder.id, alreadyProcessedFolders, boxFolder.name ?? boxFolder.id);
     writeFileSync('./serializedFileSystem.json', JSON.stringify(rootFolder, null, 2), { encoding: 'utf8' });
     console.log('Done fetching folder and file names, paths, and ids!');

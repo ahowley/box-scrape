@@ -2,8 +2,11 @@ js/*
 !js/.gitkeep
 node_modules
 .env
+stdout.txt
 foldersProcessed.txt
 filesDownloaded.txt
+filesSkipped.txt
+folderRequestCache.json
 serializedFileSystem.json
 downloads/*
 !downloads/.gitkeep
