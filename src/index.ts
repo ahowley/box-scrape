@@ -174,15 +174,20 @@ const downloadFolder = async (
     downloadPath: string,
     alreadyDownloadedFileIds: Set<string>,
 ) => {
+    await sleep(Math.random() * 1000);
     if (folder.nestedFolders) {
+        const promises = [];
         for (const nestedFolder of folder.nestedFolders) {
-            await downloadFolder(
-                client,
-                nestedFolder,
-                `${downloadPath}/${nestedFolder.folderName}`,
-                alreadyDownloadedFileIds,
+            promises.push(
+                downloadFolder(
+                    client,
+                    nestedFolder,
+                    `${downloadPath}/${nestedFolder.folderName}`,
+                    alreadyDownloadedFileIds,
+                ),
             );
         }
+        await Promise.all(promises);
     }
 
     if (!existsSync(downloadPath)) {
@@ -195,14 +200,12 @@ const downloadFolder = async (
             continue;
         }
 
-        let requestsRemaining = await getRequestsRemaining();
         console.log(
-            `Downloading folder with ID ${folder.folderId}. Requests remaining this minute: ${requestsRemaining}`,
+            `Downloading folder with ID ${folder.folderId}. Requests remaining this minute: ${await getRequestsRemaining()}`,
         );
-        while (requestsRemaining <= 0) {
+        while ((await getRequestsRemaining()) <= 0) {
             console.log(`Out of requests this minute; sleeping.`);
             await sleep(await getMsToRefresh());
-            requestsRemaining = await getRequestsRemaining();
         }
 
         const qualifiedPath = `${downloadPath}/${file.fileName.replace(/[/\\?%*:|"<>]/g, '-')}`;
