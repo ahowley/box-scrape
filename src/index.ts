@@ -12,6 +12,8 @@ const BOX_SEARCH_LIMIT = 1000;
 let RequestsRemainingThisMinute = REQUESTS_PER_MINUTE;
 let MinuteStart = Date.now();
 let FolderDownloadsCompleted = 0;
+let FileDownloadSkipCount = 0;
+let FileDownloadErrorCount = 0;
 
 const dumpCachedFolderRequests = () => {
     const forDump: [string, FileFullOrFolderMiniOrWebLink[]][] = [];
@@ -39,7 +41,7 @@ const CachedFolderRequests = existsSync('./folderRequestCache.json')
     ? readCachedFolderRequests()
     : new Map<string, FileFullOrFolderMiniOrWebLink[]>();
 
-setInterval(dumpCachedFolderRequests, 10_000);
+const FOLDER_REQUEST_CACHE_INTERVAL = setInterval(dumpCachedFolderRequests, 10_000);
 
 const getRequestsRemaining = async () => {
     let currentTimestamp = Date.now();
@@ -111,11 +113,11 @@ const getFolder = async (
     folderName: string,
 ): Promise<Folder> => {
     if (alreadyProcessedFolders.has(folderId)) {
-        console.log(`Returning previously processed folder with ID ${folderId}.`);
+        console.log(`-- 🟢 Returning previously processed folder with ID ${folderId}.`);
         return alreadyProcessedFolders.get(folderId)!;
     }
 
-    console.log(`Processing folder with ID ${folderId}.`);
+    console.log(`-- 🟠 Processing folder with ID ${folderId}.`);
     const allEntries: FileFullOrFolderMiniOrWebLink[] = [];
     let offset = 0;
     let allEntriesBatch = await getBoxFolderItems(client, folderId, offset);
@@ -162,6 +164,7 @@ const getFolder = async (
         };
     }
 
+    console.log(`-- Done downloading folder with ID ${folderId}!`);
     alreadyProcessedFolders.set(folderId, folder);
     appendFileSync('./foldersProcessed.txt', `${folderId}\t${JSON.stringify(folder)}\n`, {
         encoding: 'utf8',
@@ -175,10 +178,6 @@ const downloadFolder = async (
     folder: Folder,
     downloadPath: string,
     alreadyDownloadedFileIds: Set<string>,
-    fileProgressBar: cliProgress.SingleBar,
-    folderProgressBar: cliProgress.SingleBar,
-    fileCountTotal: number,
-    folderCountTotal: number,
 ) => {
     await sleep(Math.random() * 1000);
     if (folder.nestedFolders) {
@@ -190,10 +189,6 @@ const downloadFolder = async (
                     nestedFolder,
                     `${downloadPath}/${nestedFolder.folderName}`,
                     alreadyDownloadedFileIds,
-                    fileProgressBar,
-                    folderProgressBar,
-                    fileCountTotal,
-                    folderCountTotal,
                 ),
             );
         }
@@ -206,22 +201,16 @@ const downloadFolder = async (
 
     for (const file of folder.files) {
         if (alreadyDownloadedFileIds.has(file.fileId)) {
-            // console.log(`Skipping already downloaded file with ID '${file.fileId}': '${file.fileName}'`);
             continue;
         }
 
-        // console.log(
-        //     `Downloading folder with ID ${folder.folderId}. Requests remaining this minute: ${await getRequestsRemaining()}`,
-        // );
         while ((await getRequestsRemaining()) <= 0) {
-            // console.log(`Out of requests this minute; sleeping.`);
             await sleep(await getMsToRefresh());
         }
 
         const qualifiedPath = `${downloadPath}/${file.fileName.replace(/[/\\?%*:|"<>]/g, '-')}`;
         const stream = createWriteStream(qualifiedPath);
 
-        // console.log(`Downloading file '${file.fileName.replace(/[/\\?%*:|"<>]/g, '-')}' with ID '${file.fileId}'.`);
         RequestsRemainingThisMinute -= 1;
         try {
             const download = await client.downloads.downloadFile(file.fileId);
@@ -231,24 +220,15 @@ const downloadFolder = async (
                 appendFileSync('./filesDownloaded.txt', `${file.fileId}\n`, { encoding: 'utf8' });
             });
         } catch (err: any) {
-            // console.log(
-            //     `Failed to download file with ID ${file.fileId}: ${file.fileName}. Writing this ID to the "skipped files" document.`,
-            //     err,
-            // );
             appendFileSync('./filesSkipped.txt', `${file.fileId}\t${qualifiedPath}\t${JSON.stringify(err)}\n`, {
                 encoding: 'utf8',
             });
         } finally {
-            FolderDownloadsCompleted += 1;
             alreadyDownloadedFileIds.add(file.fileId);
-            fileProgressBar.update(
-                alreadyDownloadedFileIds.size <= fileCountTotal ? alreadyDownloadedFileIds.size : fileCountTotal,
-            );
-            fileProgressBar.update(
-                FolderDownloadsCompleted <= folderCountTotal ? FolderDownloadsCompleted : folderCountTotal,
-            );
         }
     }
+
+    FolderDownloadsCompleted += 1;
 };
 
 const countFoldersAndFiles = (folder: Folder): { fileCount: number; folderCount: number } => {
@@ -294,36 +274,54 @@ const main = async () => {
     const alreadyDownloadedFileIdsSerialized = readFileSync('./filesDownloaded.txt', { encoding: 'utf8' });
     const alreadyDownloadedFileIds = alreadyDownloadedFileIdsSerialized.split('\n').filter((line) => !!line);
 
-    console.log('Fetching root folder.');
+    console.log('Fetching root folder.\n');
     const boxFolder = await client.folders.getFolderById(ROOT_FOLDER);
     console.log('Beginning recursive folder scrape.');
     const rootFolder = await getFolder(client, boxFolder.id, alreadyProcessedFolders, boxFolder.name ?? boxFolder.id);
     writeFileSync('./serializedFileSystem.json', JSON.stringify(rootFolder, null, 2), { encoding: 'utf8' });
-    console.log('Done fetching folder and file names, paths, and ids!');
+    console.log('Done fetching folder and file names, paths, and ids! Also done updating the folder request cache.\n');
+    clearInterval(FOLDER_REQUEST_CACHE_INTERVAL);
 
+    console.log('Downloading all file IDs not already present in filesDownloaded.txt.');
     const { fileCount, folderCount } = countFoldersAndFiles(rootFolder);
     const multiBar = new cliProgress.MultiBar(
         {
+            etaBuffer: 1000,
+            fps: 10,
             clearOnComplete: false,
             hideCursor: true,
-            format: ' {bar} | {title} | {value}/{total}',
+            format: ' {bar} | {duration_formatted} elapsed, ~{eta_formatted} remaining; {value}/{total} {title} - {percentage}% -- {extra}',
         },
         cliProgress.Presets.shades_classic,
     );
-    const bar1 = multiBar.create(fileCount, 0);
-    const bar2 = multiBar.create(folderCount, 0);
+    const fileProgressBar = multiBar.create(fileCount, 0, { title: 'files', percent: 0, extra: '' });
+    const folderProgressBar = multiBar.create(folderCount, 0, { title: 'folders', percent: 0, extra: '' });
+    const alreadyDownloadedFileIdsSet = new Set(alreadyDownloadedFileIds);
 
-    await downloadFolder(
-        client,
-        rootFolder,
-        './downloads',
-        new Set(alreadyDownloadedFileIds),
-        bar1,
-        bar2,
-        fileCount,
-        folderCount + 1,
-    );
+    const getFileDownloadsCompleted = async () => alreadyDownloadedFileIdsSet.size;
+    const getFolderDownloadsCompleted = async () => FolderDownloadsCompleted;
+    const progressUpdateInterval = setInterval(async () => {
+        const fileCountProgress =
+            (await getFileDownloadsCompleted()) <= fileCount ? await getFileDownloadsCompleted() : fileCount;
+        fileProgressBar.update(fileCountProgress, {
+            title: 'files',
+            percent: Math.round((fileCountProgress / fileCount) * 10_000) / 100,
+            extra: ` | ${FileDownloadSkipCount} skipped, ${FileDownloadErrorCount} errors`,
+        });
+
+        getFolderDownloadsCompleted();
+        const folderCountProgress =
+            (await getFolderDownloadsCompleted()) <= folderCount ? await getFolderDownloadsCompleted() : folderCount;
+        folderProgressBar.update(folderCountProgress, {
+            title: 'folders',
+            percent: Math.round((folderCountProgress / folderCount) * 10_000) / 100,
+            extra: '',
+        });
+    }, 250);
+
+    await downloadFolder(client, rootFolder, './downloads', alreadyDownloadedFileIdsSet);
     console.log('Done downloading!');
+    clearInterval(progressUpdateInterval);
 };
 
 main();
