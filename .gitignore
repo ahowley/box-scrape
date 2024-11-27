@@ -10,3 +10,4 @@ folderRequestCache.json
 serializedFileSystem.json
 downloads/*
 !downloads/.gitkeep
+dev
